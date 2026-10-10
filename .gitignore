@@ -1,0 +1,27 @@
+# Virtual environments
+venv/
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Environment & secrets
+.env
+
+# Local databases
+*.db
+*.sqlite3
+
+# Generated ML artifacts (train locally; never commit)
+app/ml/*.pkl
+app/ml/*.metadata.json
+data/*_report.json
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
