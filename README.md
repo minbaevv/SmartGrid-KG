@@ -9,6 +9,7 @@
 [![ML: scikit-learn](https://img.shields.io/badge/ML-RandomForest-F7931E?logo=scikitlearn&logoColor=white)](https://scikit-learn.org/)
 [![SQLAlchemy 2.0](https://img.shields.io/badge/SQLAlchemy-2.0%20async-D71F00)](https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html)
 [![Tests](https://img.shields.io/badge/tests-24%20passing-brightgreen)](#testing)
+[![CI](https://github.com/minbaevv/SmartGrid-KG/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/minbaevv/SmartGrid-KG/actions/workflows/ci.yml)
 [![Status: synthetic demo](https://img.shields.io/badge/status-synthetic%20demo-orange)](#limitations)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
@@ -60,7 +61,8 @@ the pipeline is real, the data is not.
 | ML | scikit-learn `RandomForestClassifier` + sigmoid calibration (`CalibratedClassifierCV` over `FrozenEstimator`), `DummyClassifier` baseline | ✅ implemented (synthetic demo data) |
 | Data generation | Idempotent 3-month synthetic load generator for 8 fictional substations | ✅ implemented (demo only) |
 | Tests | `unittest` — 24 tests (weather client, API, storage, generator, training, prediction) | ✅ passing |
-| Docker | Dockerfile / container image | ⛔ planned (Stage 3) |
+| Docker | `python:3.11-slim` image + `docker-compose.yml` (bind-mounted DB and model) | 🟡 added (Stage 3); image build not yet run locally |
+| CI | GitHub Actions: `unittest` suite on Python 3.11 and 3.13 for every push / PR to `main` | ✅ implemented |
 | Auth, rate limiting, migrations (Alembic), deployment | — | ⛔ planned (Stage 3) |
 | Gradient boosting (XGBoost / LightGBM) | — | ⛔ candidate after real labelled data |
 
@@ -94,6 +96,10 @@ SmartGrid-KG/
 │   └── import_reservoir.py         # verified reservoir CSV import (manual data only)
 ├── tests/             # 24 unit/integration tests
 ├── data/              # reservoir template; local SQLite DB is git-ignored
+├── .github/workflows/ci.yml # CI: 24 unittest cases on Python 3.11 + 3.13
+├── Dockerfile         # python:3.11-slim image, uvicorn on ${PORT:-8000}
+├── docker-compose.yml # api service: :8000 + volumes for data/ and model.pkl
+├── .dockerignore      # venv/, .git/, *.db, .env stay out of the image
 ├── requirements.txt   # direct dependencies
 ├── requirements.lock.txt  # pinned, reproducible install (Windows + Linux)
 ├── plan.md            # staged roadmap (Russian; docs are partly in Russian)
@@ -134,12 +140,61 @@ uvicorn app.main:app --reload
 
 Then open <http://127.0.0.1:8000/docs> for interactive Swagger UI.
 
+### Docker (optional)
+
+```bash
+# 1) Train the model on the host first: app/ml/model.pkl is mounted into the image.
+python -m app.ml.train
+
+# 2) Build and start
+docker compose up --build
+
+# or without Compose
+docker build -t smartgrid-kg .
+docker run --rm -p 8000:8000 -v "$PWD/data:/app/data" -v "$PWD/app/ml/model.pkl:/app/app/ml/model.pkl:ro" smartgrid-kg
+```
+
+The image is built from `python:3.11-slim` with `requirements.txt`. All runtime dependencies
+(including `numpy`, `pandas`, `scikit-learn`, `asyncpg`) resolve to manylinux wheels for CPython 3.11,
+so no compiler toolchain is installed. The container listens on `${PORT:-8000}` (works with PaaS that
+inject `PORT`), exposes `/healthcheck` as a Docker healthcheck, and gets two bind mounts from
+`docker-compose.yml`: `./data` (SQLite database survives restarts) and `./app/ml/model.pkl` (trained
+model, read-only).
+
+> [!IMPORTANT]
+> The API compares the artifact's recorded scikit-learn version with the installed one and answers
+> `503 Model unavailable or incompatible` on a mismatch. `requirements.txt` resolves to scikit-learn
+> **1.9.1** for CPython 3.11 on Linux (checked by wheel resolution against CPython 3.11 platform tags,
+> not by a container build) — the same version the local `model.pkl` was trained with — so the mounted
+> artifact passes the version check. The one step that cannot be verified without Docker is unpickling
+> a Python 3.13 artifact under Python 3.11; if the model is still rejected, train inside the container
+> after the first start:
+>
+> ```bash
+> docker compose exec api python -m scripts.generate_synthetic_data
+> docker compose exec api python -m app.ml.train
+> ```
+
 ### Testing
 
 ```bash
 python -m unittest discover -s tests -v
 # Ran 24 tests ... OK
 ```
+
+### Continuous Integration
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs the suite on every push and pull request
+to `main`:
+
+- matrix over Python **3.11** (the interpreter the Docker image uses) and **3.13** (the local dev
+  interpreter) on `ubuntu-latest`, with the pip cache keyed on `requirements.txt`;
+- `python -m pip install -r requirements.txt`, then `python -m unittest discover -s tests -v`.
+
+The `-s tests` flag is required: the test modules import the shared helper `tests/support.py`, so
+discovery has to start **inside** `tests/`. A bare `python -m unittest discover` from the repository
+root finds 0 tests and still exits 0, so it must not be used in CI — it would report success without
+running anything.
 
 ### Example training output (synthetic test block)
 
@@ -253,7 +308,9 @@ validates its schema, feature list, model mode and scikit-learn version before s
 
 ## Roadmap
 
-Per [`plan.md`](plan.md) (Russian): **Stage 3** — Dockerfile, authentication, rate limiting, Alembic
+Per [`plan.md`](plan.md) (Russian): **Stage 3** — Dockerfile + Compose ✅ (containerization done;
+image build still to be verified on a machine with Docker), GitHub Actions CI ✅, authentication,
+rate limiting, Alembic
 migrations, scheduled collection, deployment (Render/Railway), client-facing docs. **Stage 4** — first
 pilot with a B2B partner, quality metrics and acceptance criteria. Also planned: obtaining real,
 licensed load/outage data, followed by district-specific models and gradient boosting (e.g. XGBoost)

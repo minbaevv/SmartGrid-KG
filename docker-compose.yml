@@ -1,0 +1,44 @@
+# SmartGrid KG — local/production-like stack (Stage 3).
+#
+#   docker compose up --build          # build + start the API on :8000
+#   docker compose logs -f api         # follow logs
+#   docker compose exec api python -m app.ml.train            # retrain inside
+#   docker compose exec api python -m scripts.generate_synthetic_data
+#
+# app/ml/model.pkl is bind-mounted from the host, so train it first:
+#   python -m app.ml.train
+# The API checks the artifact's scikit-learn version: the image resolves scikit-learn
+# 1.9.1 for CPython 3.11, the same version the local model was trained with, so the
+# mounted artifact normally passes. If it is rejected (503), retrain in the container:
+#   docker compose exec api python -m app.ml.train
+# See README -> Docker for details.
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: smartgrid-kg:latest
+    container_name: smartgrid-kg-api
+    ports:
+      - "8000:8000"
+    environment:
+      PORT: "8000"
+      APP_NAME: "SmartGrid KG"
+      # Absolute path inside the container: ./data is bind-mounted below, so the
+      # SQLite file outlives the container.
+      DATABASE_URL: "sqlite:////app/data/smartgrid.db"
+      CORS_ORIGINS: '["http://localhost:3000"]'
+      OPEN_METEO_URL: "https://api.open-meteo.com/v1/forecast"
+      HTTP_TIMEOUT_SECONDS: "15"
+      # Optional local overrides: uncomment to load a .env file (may not exist).
+      # env_file:
+      #   - path: .env
+      #     required: false
+    volumes:
+      # Local SQLite database survives `docker compose down` / image rebuilds.
+      - ./data:/app/data
+      # The trained artifact is local-only (git-ignored); mount it read-only.
+      # Train it first on the host: python -m app.ml.train
+      - ./app/ml/model.pkl:/app/app/ml/model.pkl:ro
+    restart: unless-stopped

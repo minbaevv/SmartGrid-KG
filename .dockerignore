@@ -1,0 +1,31 @@
+# Keep the build context small and free of local/secret artifacts.
+# Mirrors .gitignore so nothing service-related is ever baked into the image.
+
+# Virtual environments
+venv/
+.venv/
+
+# Python caches
+__pycache__/
+*.py[cod]
+
+# Version control & CI
+.git/
+.github/
+
+# Secrets
+.env
+*.env
+
+# Local databases (the container gets data/ via a bind mount instead)
+*.db
+*.sqlite3
+
+# Local IDE / OS noise
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local scratch output
+*.log
